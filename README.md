@@ -386,4 +386,32 @@ So, avoid changes that trigger layout recalculation and propagate to other eleme
 | Composite (GPU-only) | will-change (hint)                | 🟢 Composite optimization     | Prepares element for GPU layer                      |
 
 - Layout (reflow) is CPU-bound and blocks rendering
-- Compositing is GPU-accelerated and more efficient, but uses memory
+  > Compositing is GPU-accelerated and more efficient, but uses VRAM, `be aware of this on mobile and integrated gpu devices`.
+
+[Site to check what triggers reflow/repaint](https://csstriggers.com/)
+
+## 1.5 - Composition Layers
+
+Modern browsers use CPU and GPU together in parallel to optimize the rendering at this flow:
+
+![](assets/images/2026-04-21-07-24-05.png)
+
+| Layer Type         | Role                        | Knows about                    | Created from                         | Used for                      |
+| ------------------ | --------------------------- | ------------------------------ | ------------------------------------ | ----------------------------- |
+| DOM Tree           | Document structure          | HTML elements                  | HTML parsing                         | Base structure                |
+| Render Object Tree | What gets rendered          | Layout + styles                | DOM + CSSOM                          | Layout (geometry calculation) |
+| Render Layer Tree  | Layer grouping and stacking | stacking, z-index, paint order | Render Objects                       | Paint ordering and isolation  |
+| Graphic Layer      | GPU-accelerated compositing | Bitmap textures (VRAM)         | Render Layers (when promoted to GPU) | GPU rendering and performance |
+
+> To inspect page layers, open DevTools (Ctrl + Shift + P) and search for "Layers" and select the checkbox "Paints". Thus, you can check how much GPU memory a layer is using.
+
+![](assets/images/2026-04-21-06-47-51.png)
+
+Rendering order:
+
+```txt
+DOM node (structure) → RenderObject (layout)
+  ↳ may create stacking context (z-index, opacity, transform, etc)
+  ↳ may create RenderLayer (when isolated painting is needed)
+    ↳ may be promoted to GraphicLayer (GPU compositing)
+```
