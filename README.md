@@ -104,9 +104,7 @@ Defines how the box participates in layout flow.
 
 The browser sometimes creates implicit boxes. To maintain valid layout structure especially when mixing inline and block content.
 
-Example:
-
-Text not wrapped in a block → browser wraps it in an anonymous block box.
+Example: text not wrapped in a block → browser wraps it in an anonymous block box.
 
 ![](assets/images/2026-03-24-10-03-07.png)
 
@@ -135,13 +133,15 @@ Examples of rules:
 
 > Each formatting context is `isolated` from others.
 
-- Rules inside a context do not leak out
+- Layout rules inside a context do not affect outside elements
 - External layout rules do not affect internal elements
 
 Cause → effect:
 
 - Creating a new context → creates a boundary
 - Elements inside → only follow that context’s rules
+
+> Creating a new formatting context does not change the default position (static)
 
 ```html
 <div class="outer">
@@ -324,3 +324,66 @@ html {
 Key takeaway:
 
 - Formatting context is primarily controlled by CSS, not the tag itself
+
+## 1.3 - Browser Positioning
+
+By default, `elements are laid out from left to right and top to bottom`.The `default positioning value is position: static`.
+
+| Position | Flow          | Reference for positioning   | Key behavior                                                         |
+| -------- | ------------- | --------------------------- | -------------------------------------------------------------------- |
+| static   | In flow       | N/A                         | Default. Ignores top, left, etc.                                     |
+| relative | In flow       | Its own original position   | Can be offset without leaving the flow                               |
+| absolute | Out of flow   | Nearest positioned ancestor | Removed from flow, positioned freely                                 |
+| fixed    | Out of flow   | Viewport                    | Stays fixed on screen (ignores scroll)                               |
+| sticky   | In flow → Out | Scroll container / viewport | Acts like relative until a scroll threshold, then behaves like fixed |
+
+### Containing block
+
+- The containing block is usually the `nearest ancestor with position`: relative, absolute, or fixed.
+- If none exists, the element is positioned relative to the viewport.
+
+### Stacking context
+
+A stacking context controls how elements are layered on the z-axis (depth). It can be created by:
+
+- positioned elements (relative, absolute, fixed, sticky) with a z-index
+- other properties like opacity, transform, etc.
+
+![](assets/images/2026-03-31-08-06-42.png)
+
+## 1.4 - Reflow & Repaint
+
+The browser compiles two trees:
+
+1 - DOM (Document Object Model) – a tree-like representation of an HTML/XML document, where each element is a node, allowing JavaScript to manipulate it.
+2 - CSSOM (CSS Object Model) – a tree-like representation of CSS styles, allowing JavaScript to read and manipulate them.
+
+`When the DOM or CSSOM changes, the browser may trigger a reflow`, recalculating layout (positions and sizes), followed by repaint and compositing:
+
+![](assets/images/2026-04-17-15-33-10.png)
+
+> Reflow is expensive because it recalculates layout (positions and sizes), while repaint only affects visual changes without layout recalculation. However, creating too many graphics layers can increase memory usage and hurt performance.
+
+[![Reflow Visualization Video](<![](assets/images/2026-04-17-16-01-05.png)>)](https://www.youtube.com/watch?v=dndeRnzkJDU)
+
+![](assets/images/2026-04-21-05-49-55.png)
+
+So, avoid changes that trigger layout recalculation and propagate to other elements. Prefer composite-only properties like transform and opacity whenever possible.
+
+| Category             | Property / Change                 | Pipeline Impact               | Why it’s expensive or cheap                         |
+| -------------------- | --------------------------------- | ----------------------------- | --------------------------------------------------- |
+| Layout (Reflow)      | width, height                     | 🔴 Layout → Paint → Composite | Changes element size → affects surrounding elements |
+| Layout (Reflow)      | margin, padding, gap              | 🔴 Layout → Paint → Composite | Alters spacing → shifts other elements              |
+| Layout (Reflow)      | top, left, right, bottom          | 🔴 Layout → Paint → Composite | Repositions element in layout flow                  |
+| Layout (Reflow)      | display                           | 🔴 Layout → Paint → Composite | Changes layout structure entirely                   |
+| Layout (Reflow)      | font-size, line-height            | 🔴 Layout → Paint → Composite | Text reflows → layout recalculated                  |
+| Layout (Reflow)      | DOM changes (add/remove elements) | 🔴 Full pipeline              | Forces layout recalculation and tree updates        |
+| Paint (Repaint)      | background-color                  | 🟠 Paint → Composite          | Only redraws pixels, no layout change               |
+| Paint (Repaint)      | box-shadow, border                | 🟠 Paint → Composite          | Visual change, but requires repaint                 |
+| Paint (Repaint)      | filter                            | 🟠 Paint → Composite          | Can be GPU-accelerated but still costly             |
+| Composite (GPU-only) | transform                         | 🟢 Composite only             | Moves/scales element without affecting layout       |
+| Composite (GPU-only) | opacity                           | 🟢 Composite only             | Changes transparency only                           |
+| Composite (GPU-only) | will-change (hint)                | 🟢 Composite optimization     | Prepares element for GPU layer                      |
+
+- Layout (reflow) is CPU-bound and blocks rendering
+- Compositing is GPU-accelerated and more efficient, but uses memory
