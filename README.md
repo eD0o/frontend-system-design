@@ -415,3 +415,7 @@ DOM node (structure) → RenderObject (layout)
   ↳ may create RenderLayer (when isolated painting is needed)
     ↳ may be promoted to GraphicLayer (GPU compositing)
 ```
+
+Browser Rendering Example:
+
+![](assets/images/2026-04-22-07-55-04.png)
