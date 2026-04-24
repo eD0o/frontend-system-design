@@ -6,9 +6,8 @@ The DOM API is the `interface with tools to manipulate the page`. It is exposed 
 
 ### Global entry points
 
-The browser exposes two main objects:
+The browser exposes two main ob- `windo- window → global execution context
 
-- window → global execution context
 - document → representation of the current page
 
 ![](assets/images/2026-04-22-08-07-11.png)
@@ -115,3 +114,327 @@ Quick mental comparison:
 - Lowest memory → getElementsByClassName / TagName
 - Most flexible → querySelector
 - Best for stable iteration → querySelectorAll
+
+## 2.2 - DOM Performance Best Practices
+
+### CSS Selectors and Nesting
+
+Writing performant CSS/SCSS is not about micro-optimizing selectors.
+It’s about `avoiding structural nesting, keeping selectors flat and maintaining predictability` at scale.
+
+#### Repetition vs Coupling
+
+Good CSS feels a bit repetitive because it is:
+
+- decoupled from the DOM structure
+- independent
+- predictable
+
+Bad CSS usually tries to “save typing” by mirroring the DOM → which leads to:
+
+- deep nesting
+- structural dependency
+- fragile code
+
+❌ Avoid Structural Nesting:
+
+```scss
+.card {
+  .wrapper {
+    .title {
+      color: red;
+    }
+  }
+}
+```
+
+It compiles to:
+
+```css
+.card .wrapper .title
+```
+
+Problems:
+
+- adds `extra matching cost` (usually small, but accumulates at scale)
+- depends on DOM hierarchy
+- requires ancestor traversal
+- breaks if structure changes
+- higher specificity
+
+✅ Prefer Flat Selectors (BEM)
+
+```scss
+.card__title {
+  color: red;
+}
+```
+
+Benefits:
+
+- direct match (no traversal)
+- independent of structure
+- easier to maintain and override
+
+⚡ The Practical Problem
+
+Flat CSS is correct, but can feel repetitive:
+
+```scss
+.card__title {
+}
+.card__subtitle {
+}
+.card__button {
+}
+```
+
+#### 💡 Solution: Use `&` for Developer Experience (without nesting)
+
+```scss
+.card {
+  &__title {
+    color: red;
+  }
+
+  &__subtitle {
+    color: gray;
+  }
+
+  &__button {
+    color: blue;
+  }
+}
+```
+
+Thus, it compiles to:
+
+```css
+.card__wrapper {
+}
+.card__title {
+}
+.card__subtitle {
+}
+.card__button {
+}
+```
+
+#### ❌ Avoid chaining sub-elements in BEM
+
+```scss
+.card__wrapper__title__text {} ❌
+```
+
+Why this is wrong:
+
+- encodes DOM structure into the class name
+- tightly couples CSS to HTML hierarchy
+- reduces flexibility
+- harder to reuse
+- breaks BEM principles
+
+> BEM models semantics, not DOM depth.
+
+✅ Correct approach:
+
+💡 If you need more specificity use clearer naming, not chaining
+
+```scss
+.card__title-text {
+}
+```
+
+Instead of writing:
+
+```scss
+.card__title__text {} ❌
+```
+
+You define a new element with a clearer semantic meaning:
+
+```scss
+.card__title-text {
+}
+```
+
+👉 This represents:
+
+- “a specific type of text related to the title”
+
+NOT:
+
+- “text inside title inside wrapper”
+
+#### 📌 When to use this pattern
+
+Use block\_\_element-subElement when:
+
+- the element has a `specific role or meaning`
+- you want to express `intent, not structure`
+- the name improves clarity
+
+Examples:
+
+```scss
+.card__title-text {
+}
+.card__title-icon {
+}
+.card__button-label {
+}
+.card__avatar-image {
+}
+```
+
+👉 These are:
+
+- still flat
+- still BEM-compliant
+- NOT chained elements
+- more expressive
+
+Key difference:
+
+| Pattern                 | Meaning                   |
+| ----------------------- | ------------------------- |
+| `.card__title__text` ❌ | structure-based (wrong)   |
+| `.card__title-text` ✅  | semantic naming (correct) |
+
+#### BEM Modifiers (`--`)
+
+Modifiers represent **state or variation**, not structure.
+
+```scss
+.card {
+  &__button {
+    &--primary {
+      background: blue;
+    }
+
+    &--disabled {
+      opacity: 0.5;
+    }
+  }
+}
+```
+
+```html
+<button class="card__button card__button--primary"></button>
+```
+
+❌ Don't use modifiers for structure
+
+```scss
+.card--title {} ❌
+.card__header--title {} ❌
+```
+
+- If it's a part → use `__`
+- If it's a variation → use `--`
+- If needs a naming refinement → use `-`
+
+### Adding and Removing Elements
+
+`Modifying the DOM is always expensive. Any DOM mutation can trigger reflow → paint → composite`, so there is no "free" method.
+
+The goal is not to find a perfect method, but to `minimize how often you mutate the DOM`.
+
+#### Why DOM mutations are expensive
+
+When you change the DOM, the browser may:
+
+- Recalculate layout (reflow)
+- Repaint pixels
+- Re-composite layers
+
+Additionally, some methods add extra costs like parsing HTML.
+
+#### Insertion Methods and Cost
+
+##### ❌ innerHTML / insertAdjacentHTML
+
+```js
+element.innerHTML = "<div>...</div>";
+element.insertAdjacentHTML("beforeend", "<div>...</div>");
+```
+
+Problems:
+
+- Requires HTML parsing
+- Re-parses and recreates DOM nodes
+- Often causes layout recalculation
+- Validates HTML again
+
+Use case:
+
+- OK for initial render (once)
+- Avoid for frequent dynamic updates
+
+innerHTML = parsing + reflow → worst case
+
+Performance impact: Extreme 💀
+
+##### ⚠️ appendChild / insertAdjacentElement
+
+```js
+element.appendChild(node);
+element.insertAdjacentElement("beforeend", node);
+```
+
+Advantages:
+
+- Uses already created DOM nodes
+- No HTML parsing
+- Direct DOM insertion (no parsing step)
+
+Still:
+
+- May trigger layout recalculation (reflow)
+- Cost grows with frequency
+
+Performance impact: High (but better than innerHTML) ⚠️
+
+#### Removing Elements
+
+```js
+element.remove();
+```
+
+or
+
+```js
+element.innerHTML = "";
+```
+
+Notes:
+
+- Also triggers reflow
+- innerHTML = "" wipes everything (heavier)
+
+#### Summarized Tables
+
+Insert Methods:
+
+| Method                  | Parses HTML | Uses Existing Nodes | Reflow Impact | Perf Impact | When to Use                         |
+| ----------------------- | ----------- | ------------------- | ------------- | ----------- | ----------------------------------- |
+| `innerHTML`             | Yes         | No                  | High          | Extreme 💀  | Initial render (once)               |
+| `insertAdjacentHTML`    | Yes         | No                  | High          | Extreme 💀  | Rarely (same problems as innerHTML) |
+| `appendChild`           | No          | Yes                 | Medium        | High ⚠️     | Dynamic updates                     |
+| `insertAdjacentElement` | No          | Yes                 | Medium        | High ⚠️     | Flexible insertion positions        |
+
+Remove Methods:
+
+| Method             | Scope        | Cost   | Notes                          |
+| ------------------ | ------------ | ------ | ------------------------------ |
+| `element.remove()` | Single node  | Medium | Preferred for targeted removal |
+| `innerHTML = ""`   | All children | High   | Clears everything (heavier)    |
+
+#### Strategy
+
+- ❌ Don’t mutate DOM repeatedly in loops
+- ❌ Don’t rely on `innerHTML` for dynamic updates
+- ✅ Prefer creating nodes once and reusing them
+- ✅ Batch updates when possible
+
+> DOM mutations are not slow because of the method itself, but because they force the browser to recompute the page. 
