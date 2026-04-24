@@ -437,4 +437,109 @@ Remove Methods:
 - ✅ Prefer creating nodes once and reusing them
 - ✅ Batch updates when possible
 
-> DOM mutations are not slow because of the method itself, but because they force the browser to recompute the page. 
+> DOM mutations are not slow because of the method itself, but because they force the browser to recompute the page.
+
+## 2.3 - DocumentFragment, `<template>` and efficient DOM updates
+
+Allows building UI `structure in memory, applying all mutations first, and only then committing once` to the DOM.
+
+### Rendering approaches
+
+Different ways to generate DOM have very different runtime costs.
+
+| Approach            | How it works                       | Cost characteristics                        | Limitations                 |
+| ------------------- | ---------------------------------- | ------------------------------------------- | --------------------------- |
+| String + innerHTML  | Build HTML string and inject       | Parsing + DOM reconstruction                | Hard to reuse, inefficient  |
+| Template + Fragment | Clone pre-defined markup in memory | No parsing after load, single DOM insertion | Slightly more verbose setup |
+
+Cause → effect:
+
+- innerHTML → parse HTML → recreate nodes → layout work
+- template → clone nodes → mutate in memory → single layout on insert
+
+### Template as a reusable blueprint
+
+`Template keeps markup in HTML but outside the DOM tree`.
+
+- Stored as inert structure in memory
+- Not rendered
+- Not traversable through normal DOM queries
+- Accessible via its element, not its content
+
+Flow:
+
+- template = static definition
+- content = detached fragment
+- clone = runtime instance
+
+### DocumentFragment behavior
+
+`Template.content returns a DocumentFragment`.
+
+| Property    | Behavior                     |
+| ----------- | ---------------------------- |
+| Location    | Exists only in memory        |
+| Rendering   | Not part of render tree      |
+| Mutations   | Do not trigger reflow        |
+| Reusability | Can be cloned multiple times |
+| Isolation   | Detached from DOM queries    |
+
+Cause → effect:
+
+- Mutate DOM node → reflow
+- Mutate fragment → no reflow
+
+Only insertion into the DOM triggers rendering.
+
+### Cloning and instantiation
+
+Each component instance is created by cloning the fragment.
+
+| Step              | Result                   |
+| ----------------- | ------------------------ |
+| template.content  | Returns DocumentFragment |
+| cloneNode(true)   | Deep copy                |
+| firstElementChild | Extract usable element   |
+
+### Example structure and usage
+
+HTML template:
+
+```html
+<template id="card_template">
+  <article class="card">
+    <h3 class="card__title"></h3>
+    <div class="card__body">
+      <div class="card__image"></div>
+      <section class="card__content"></section>
+    </div>
+  </article>
+</template>
+```
+
+Correct usage (scoped queries):
+
+```ts
+const container = document.getElementById("container");
+
+function createCardElement(title, body) {
+  const template = document.getElementById("card_template");
+  const element = template.content.cloneNode(true).firstElementChild;
+
+  const cardTitle = element.querySelector(".card__title");
+  const cardBody = element.querySelector(".card__content");
+
+  cardTitle.textContent = title;
+  cardBody.textContent = body;
+
+  return element;
+}
+
+// appendChild is the only step that triggers rendering
+container.appendChild(
+  createCardElement(
+    "Frontend System Design: Fundamentals",
+    "This is a random content",
+  ),
+);
+```
