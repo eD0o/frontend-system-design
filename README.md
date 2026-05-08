@@ -219,3 +219,259 @@ Constraint:
 | observes application state | observes DOM mutations       |
 | declarative                | imperative                   |
 | knows what should change   | detects what already changed |
+
+## 3.3 - ResizeObserver
+
+Different resize problems require different tools.
+
+The key distinction is:
+
+- viewport-based adaptation
+- element-based adaptation
+- style-only reactions
+- JavaScript-driven reactions
+
+Modern browser APIs try to avoid manual resize tracking because `resize calculations can become extremely expensive during continuous layout updates`.
+
+### Comparing Resize Approaches
+
+| Tool                | Tracks            | JS Callback | Performance | Typical Use                   |
+| ------------------- | ----------------- | ----------- | ----------- | ----------------------------- |
+| CSS Media Query     | viewport/window   | no          | excellent   | responsive layouts            |
+| CSS Container Query | element container | no          | excellent   | component-based responsive UI |
+| ResizeObserver      | specific elements | yes         | very good   | reactive element measurements |
+| resize event        | window            | yes         | poor        | legacy/manual resize logic    |
+
+### CSS Media Queries
+
+Best option for adaptive layouts when JavaScript execution is unnecessary.
+
+The browser evaluates breakpoints internally during layout calculation, so `no DOM event traversal or JS scheduling is involved`.
+
+Cause → effect:
+
+- CSS-only adaptation
+- browser handles layout natively
+- minimal runtime overhead
+
+Limitations:
+
+- cannot execute JS callbacks
+- cannot observe individual element sizes
+- only reacts to viewport conditions
+
+Example:
+
+```css
+@media (max-width: 768px) {
+  .sidebar {
+    display: none;
+  }
+}
+```
+
+### CSS Container Queries
+
+Container queries solve a major limitation of media queries.
+
+Instead of reacting to the viewport, `components react to the size of their parent container`.
+
+Cause → effect:
+
+- component size changes
+- browser recalculates query conditions
+- children adapt automatically
+
+Still CSS-only:
+
+- no JS callback support
+- no measurement logic
+- no side effects
+
+Example:
+
+```css
+.card-container {
+  container-type: inline-size;
+}
+
+@container (max-width: 400px) {
+  .card {
+    flex-direction: column;
+  }
+}
+```
+
+Useful for:
+
+- reusable UI systems
+- cards/grids
+- dashboards
+- nested layouts
+
+### resize Event
+
+The resize event is `one of the slowest resize mechanisms`.
+
+It relies on the standard DOM event system, which means the `browser must propagate the event through the DOM tree`.
+
+Internally:
+
+- event travels down the tree
+- reaches target
+- bubbles back upward
+
+This propagation happens repeatedly during continuous resizing.
+
+Another major issue:
+
+- resize fires extremely often
+- thousands of callbacks may execute during a small drag resize
+
+Cause → effect:
+
+- continuous window resize
+- excessive event firing
+- repeated layout work
+- performance degradation
+
+Example:
+
+```ts
+window.addEventListener("resize", () => {
+  console.log(window.innerWidth);
+});
+```
+
+In practice, resize handlers are commonly debounced:
+
+```ts
+let timeout: number;
+
+window.addEventListener("resize", () => {
+  clearTimeout(timeout);
+
+  timeout = window.setTimeout(() => {
+    console.log("resize finished");
+  }, 200);
+});
+```
+
+Limitations:
+
+- tracks only viewport/window
+- cannot observe arbitrary elements
+- high callback frequency
+- expensive under heavy layouts
+
+Prefer avoiding it unless:
+
+- supporting legacy environments
+- reacting specifically to viewport changes
+- ResizeObserver is unavailable
+
+### ResizeObserver
+
+ResizeObserver was designed specifically for element resize tracking.
+
+Unlike resize events, it `avoids expensive DOM event propagation and works closer to the rendering/layout` engine.
+
+Mental model:
+
+- browser detects element size changes during layout
+- observer batches notifications
+- callback runs after changes are collected
+
+Cause → effect:
+
+- element dimensions change
+- browser schedules observer entries
+- callback receives size snapshots
+
+Advantages:
+
+- tracks individual elements
+- supports multiple observed elements
+- much lower overhead than resize events
+- callback-based API
+
+### ResizeObserver API
+
+The API is intentionally minimal.
+
+Constructor:
+
+```ts
+const observer = new ResizeObserver((entries) => {
+  for (const entry of entries) {
+    console.log(entry);
+  }
+});
+```
+
+Observation:
+
+```ts
+observer.observe(element);
+```
+
+Multiple elements can share the same observer:
+
+```ts
+observer.observe(card1);
+observer.observe(card2);
+observer.observe(card3);
+```
+
+### Box Types
+
+ResizeObserver can measure different box models.
+
+Options:
+
+| Box         | Includes                   |
+| ----------- | -------------------------- |
+| content-box | content only               |
+| border-box  | content + padding + border |
+
+Example:
+
+```ts
+observer.observe(element, {
+  box: "border-box",
+});
+```
+
+Behavior difference:
+
+- content-box ignores padding/border changes
+- border-box reacts to total rendered size changes
+
+This matters when layout depends on visual dimensions rather than content area.
+
+### ResizeObserverEntry
+
+Each ResizeObserver callback receives entry objects describing resized elements.
+
+Important properties:
+
+| Property       | Purpose                  |
+| -------------- | ------------------------ |
+| target         | resized element          |
+| contentBoxSize | content dimensions       |
+| borderBoxSize  | total visible dimensions |
+
+Example:
+
+```ts
+const observer = new ResizeObserver((entries) => {
+  for (const entry of entries) {
+    const size = entry.borderBoxSize[0];
+
+    console.log(size.inlineSize); // width
+    console.log(size.blockSize); // height
+  }
+});
+```
+
+> The [0] exists because these values are arrays internally, even though today they usually contain only one item.
