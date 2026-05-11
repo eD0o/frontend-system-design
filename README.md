@@ -1,477 +1,279 @@
-# 3 - Observer APIs
+# 4 - Virtualization
 
-Changes without polling by letting the browser handle detection.
+A rendering optimization technique that `keeps data in memory while only rendering` the visible portion of the UI.
 
-Core idea:
+The main goal is to `reduce DOM size, mutations, CPU work, and memory` usage. Large DOM trees are expensive for the browser to maintain, layout, paint, and update.
 
-- subscribe instead of polling
-- runs only on change
-- async + batched
+## 4.1 - Technique
+
+Instead of rendering the entire dataset::
+
+- keep the full dataset in memory
+- render only a small visible window
+- recycle DOM nodes as the user scrolls
+
+Mental model:
+
+- the data grows
+- the DOM stays almost the same size
 
 Cause → effect:
 
-- polling → constant work
-- observer → work only when needed
+- fewer DOM nodes → less layout/repaint work
+- fewer mutations → lower CPU usage
+- stable DOM size → more predictable performance
 
-Handled at browser level (not JS loop)
+| Aspect                | Normal Rendering             | Virtualization          |
+| --------------------- | ---------------------------- | ----------------------- |
+| DOM size              | grows continuously           | stays relatively stable |
+| CPU work              | more layout/repaint work     | reduced rendering work  |
+| Scrolling performance | degrades with large lists    | more consistent         |
+| Element lifecycle     | constantly creates new nodes | reuses existing nodes   |
 
-Types
+This is especially important for:
 
-| API                  | Observes   | Main use              | Examples                  |
-| -------------------- | ---------- | --------------------- | ------------------------- |
-| IntersectionObserver | Visibility | Lazy load, scroll UI  | Virtualization, analytics |
-| MutationObserver     | DOM        | Dynamic UI            | Editors, drawing tools    |
-| ResizeObserver       | Size       | Responsive components | Charts, adaptive layout   |
+- infinite feeds
+- chat applications
+- tables
+- large lists
+- log viewers
 
-## 3.1 - IntersectionObserver
+### 4.1.1 - High-Level Structure
 
-`Detects when an element enters or leaves the visible area of a container`.
+A virtualized list usually contains:
 
-Concepts:
+- top observer
+- viewport
+- virtual list container
+- bottom observer
 
-- target → observed element
-- root → container used as reference (default: viewport)
-- threshold → minimum visibility ratio required to trigger
+Simplified structure:
 
-One observer can track multiple elements.
+```html
+<div class="container">
+  <div id="top-observer"></div>
 
-Callback:
+  <div class="virtual-list">
+    <!-- rendered items -->
+  </div>
 
-- async
-- fires only on state change
-- receives entries[] and observer
+  <div id="bottom-observer"></div>
+</div>
+```
 
-Fires when:
+| Element         | Responsibility             |
+| --------------- | -------------------------- |
+| top observer    | detects upward scrolling   |
+| viewport        | defines the visible area   |
+| virtual list    | renders visible items      |
+| bottom observer | detects downward scrolling |
 
-- target starts intersecting
-- target stops intersecting
+The observers are typically implemented with IntersectionObserver.
 
-Each entry contains:
+### 4.1.2 - Flow
 
-- isIntersecting → whether the target is currently visible/intersecting
+Initial render:
 
-> entries[] exists because multiple observed elements can update together.
+```txt
+[item 1]
+[item 2]
+```
 
-Usage:
+Example with page size = 2:
+
+When the viewport reaches the bottom observer:
+
+- load next data chunk
+- do not create unlimited DOM elements
+- recycle elements that are no longer visible
+
+Instead of creating new nodes:
+
+```txt
+[item 1] -> recycled
+[item 2] -> recycled
+```
+
+Those elements are moved and updated to represent:
+
+```txt
+[item 5]
+[item 6]
+```
+
+Important detail:
+
+- the user cannot see recycled elements during the move
+- recycling happens outside the visible viewport
+
+This creates the illusion of an infinitely growing list while keeping the DOM size stable.
+
+### 4.1.3 - Positioning Strategy
+
+Virtualized lists commonly reposition elements using transforms.
+
+Example:
+
+```ts
+const translateY = (y: number) => `transform: translateY(${y}px)`;
+```
+
+Transforms are preferred because they:
+
+- avoid expensive layout recalculations
+- are usually GPU-accelerated
+- allow smooth movement
+
+The implementation also stores positional metadata using attributes like:
+
+```html
+<div data-y="120"></div>
+```
+
+This helps track where recycled elements should be placed.
+
+### 4.1.4 - Observer-Based Rendering
+
+IntersectionObserver is used to detect when observers enter the viewport.
+
+Example:
 
 ```ts
 const observer = new IntersectionObserver(
-  (entries, observer) => {
-    entries.forEach((entry) => {
-      if (entry.isIntersecting) {
-        // logic here
+  (entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+
+      if (entry.target.id === "top-observer") {
+        handleTopObserver();
       }
-    });
+
+      if (entry.target.id === "bottom-observer") {
+        handleBottomObserver();
+      }
+    }
   },
   {
-    root: document.getElementById("container"),
-    threshold: 0.1,
+    threshold: 0.2,
   },
 );
-
-observer.observe(document.getElementById("target"));
 ```
 
-Manual approach before IntersectionObserver:
+Behavior:
+
+- observer intersects viewport
+- callback fires
+- list updates
+- elements get recycled/repositioned
+
+Threshold controls how much of the target must be visible before triggering.
+
+Example:
+
+```txt
+threshold: 0.2
+```
+
+Means:
+
+```txt
+20% visible → callback executes
+```
+
+### 4.1.5 - Rendering Model
+
+The implementation separates:
+
+- template generation
+- DOM rendering
+- side effects
+
+Simplified flow:
+
+```txt
+HTML template → render → register observers/effects
+```
+
+Example render pattern:
 
 ```ts
-setInterval(() => {
-  const rectA = A.getBoundingClientRect();
-  const rectB = B.getBoundingClientRect();
-
-  const isIntersecting =
-    rectA.bottom > rectB.top &&
-    rectA.right > rectB.left &&
-    rectA.top < rectB.bottom &&
-    rectA.left < rectB.right;
-
-  if (isIntersecting) {
-    // logic here
-  }
-}, 50);
+render() {
+  root.innerHTML = this.toHTML();
+  this.effect();
+}
 ```
-
-Manual polling runs repeatedly.
-IntersectionObserver runs only when intersection state changes.
-
-Performance:
-
-- no polling
-- no layout loops
-- batched updates
-
-Result:
-
-- lower CPU usage
-- scales well
 
 Mental model:
 
-Instead of repeatedly checking:
+- toHTML() describes structure
+- effect() attaches browser behavior
 
-```ts
-check();
-```
+This resembles React's render + effect lifecycle.
 
-Think:
+### 4.2 - Virtualization in React
 
-“notify me when visibility changes”
+In React, virtualization is usually `implemented declaratively through libraries instead of manual DOM` recycling.
 
-## 3.2 - MutationObserver
+Common libraries:
 
-`Reacts to DOM changes by subscribing to mutations` instead of manual polling (setTimeout / setInterval).
+- react-window
+- react-virtualized
+- TanStack Virtual
 
-The browser `batches DOM changes and delivers them asynchronously`.
+Instead of manually moving DOM nodes, React virtualization typically works by:
 
-### Core behavior
-
-- runs natively inside the browser
-- asynchronous and batched
-- triggered only when configured conditions are met
-
-Cause → effect:
-
-- manual checks → constant work → CPU overhead
-- observer → runs on change → minimal work
-
-### What to observe
-
-| Option        | What it detects        | Scope                | When to use                   |
-| ------------- | ---------------------- | -------------------- | ----------------------------- |
-| childList     | added or removed nodes | direct children only | track immediate structure     |
-| subtree       | descendant DOM changes | entire subtree       | track deep DOM changes        |
-| attributes    | attribute changes      | target element       | class, style, data-\* updates |
-| characterData | text content changes   | text nodes           | inputs, editable content      |
-
-Key distinction:
-
-- childList → direct children only
-- subtree → includes all descendants
-
-### Configuration
-
-The observer only reacts to what you enable.
-
-- more flags → more callback executions
-- fewer, precise flags → better performance
-
-Guideline:
-
-- enable only what you need
-- avoid setting everything to true
-
-### Mutation record
-
-Each callback receives a list of changes, not the full state.
-
-Common fields:
-
-- type → what changed
-- target → where it happened
-- addedNodes / removedNodes → structural changes
-- oldValue → previous value (if enabled)
-
-Think of it as a diff, not a snapshot.
-
-### Example
-
-```ts
-const observer = new MutationObserver((mutations) => {
-  for (const m of mutations) {
-    if (m.type === "childList") {
-      // handle node changes
-    }
-  }
-});
-
-observer.observe(targetNode, {
-  childList: true,
-  subtree: true,
-});
-```
-
-### Performance
-
-- native → faster than JS-based tracking
-- scales better than manual observation
-- large observed subtrees can still be expensive
-
-Constraint:
-
-- broad configs → too many callbacks
-- heavy callbacks → main bottleneck
-
-### Flow
-
-1. create observer with callback
-2. configure what to track
-3. attach to target node
-4. handle mutations selectively
-
-> Define what matters, don't try observing everything
-
-### Mutation Observer in React
-
-`React already reacts to state changes and controls DOM updates` internally, so observing DOM mutations is usually redundant.
-
-| React                      | MutationObserver             |
-| -------------------------- | ---------------------------- |
-| observes application state | observes DOM mutations       |
-| declarative                | imperative                   |
-| knows what should change   | detects what already changed |
-
-## 3.3 - ResizeObserver
-
-Different resize problems require different tools.
-
-The key distinction is:
-
-- viewport-based adaptation
-- element-based adaptation
-- style-only reactions
-- JavaScript-driven reactions
-
-Modern browser APIs try to avoid manual resize tracking because `resize calculations can become extremely expensive during continuous layout updates`.
-
-### Comparing Resize Approaches
-
-| Tool                | Tracks            | JS Callback | Performance | Typical Use                   |
-| ------------------- | ----------------- | ----------- | ----------- | ----------------------------- |
-| CSS Media Query     | viewport/window   | no          | excellent   | responsive layouts            |
-| CSS Container Query | element container | no          | excellent   | component-based responsive UI |
-| ResizeObserver      | specific elements | yes         | very good   | reactive element measurements |
-| resize event        | window            | yes         | poor        | legacy/manual resize logic    |
-
-### CSS Media Queries
-
-Best option for adaptive layouts when JavaScript execution is unnecessary.
-
-The browser evaluates breakpoints internally during layout calculation, so `no DOM event traversal or JS scheduling is involved`.
-
-Cause → effect:
-
-- CSS-only adaptation
-- browser handles layout natively
-- minimal runtime overhead
-
-Limitations:
-
-- cannot execute JS callbacks
-- cannot observe individual element sizes
-- only reacts to viewport conditions
+- calculating the visible range
+- rendering only visible items
+- updating the rendered subset during scroll
 
 Example:
 
-```css
-@media (max-width: 768px) {
-  .sidebar {
-    display: none;
-  }
-}
+```ts
+const startIndex = Math.floor(scrollTop / itemHeight);
+const endIndex = startIndex + visibleCount;
 ```
 
-### CSS Container Queries
+Then only the visible slice is rendered:
 
-Container queries solve a major limitation of media queries.
+```ts
+items.slice(startIndex, endIndex);
+```
 
-Instead of reacting to the viewport, `components react to the size of their parent container`.
+| Vanilla JS                 | React Virtualization     |
+| -------------------------- | ------------------------ |
+| manual DOM recycling       | declarative rendering    |
+| direct DOM mutations       | state-driven updates     |
+| explicit node movement     | abstracted by libraries  |
+| IntersectionObserver-heavy | scroll calculation-heavy |
+| low-level control          | easier integration       |
 
-Cause → effect:
+Unlike low-level vanilla JS implementations:
 
-- component size changes
-- browser recalculates query conditions
-- children adapt automatically
+- React usually abstracts DOM recycling
+- libraries manage positioning internally
+- rendering becomes state-driven instead of mutation-driven
 
-Still CSS-only:
+Many React virtualization libraries also use:
 
-- no JS callback support
-- no measurement logic
-- no side effects
+- absolute positioning
+- translateY
+- spacer elements
+- overscanning
+
+Overscanning renders a small buffer outside the viewport to avoid visible pop-in during fast scrolling.
 
 Example:
 
-```css
-.card-container {
-  container-type: inline-size;
-}
-
-@container (max-width: 400px) {
-  .card {
-    flex-direction: column;
-  }
-}
+```txt
+visible items: 10
+overscan: 3
+actual rendered: 16
 ```
 
-Useful for:
+Modern React virtualization often `relies more on scroll position calculations than IntersectionObserver because it provides more deterministic rendering behavior` for large lists.
 
-- reusable UI systems
-- cards/grids
-- dashboards
-- nested layouts
+IntersectionObserver is still commonly used for:
 
-### resize Event
-
-The resize event is `one of the slowest resize mechanisms`.
-
-It relies on the standard DOM event system, which means the `browser must propagate the event through the DOM tree`.
-
-Internally:
-
-- event travels down the tree
-- reaches target
-- bubbles back upward
-
-This propagation happens repeatedly during continuous resizing.
-
-Another major issue:
-
-- resize fires extremely often
-- thousands of callbacks may execute during a small drag resize
-
-Cause → effect:
-
-- continuous window resize
-- excessive event firing
-- repeated layout work
-- performance degradation
-
-Example:
-
-```ts
-window.addEventListener("resize", () => {
-  console.log(window.innerWidth);
-});
-```
-
-In practice, resize handlers are commonly debounced:
-
-```ts
-let timeout: number;
-
-window.addEventListener("resize", () => {
-  clearTimeout(timeout);
-
-  timeout = window.setTimeout(() => {
-    console.log("resize finished");
-  }, 200);
-});
-```
-
-Limitations:
-
-- tracks only viewport/window
-- cannot observe arbitrary elements
-- high callback frequency
-- expensive under heavy layouts
-
-Prefer avoiding it unless:
-
-- supporting legacy environments
-- reacting specifically to viewport changes
-- ResizeObserver is unavailable
-
-### ResizeObserver
-
-ResizeObserver was designed specifically for element resize tracking.
-
-Unlike resize events, it `avoids expensive DOM event propagation and works closer to the rendering/layout` engine.
-
-Mental model:
-
-- browser detects element size changes during layout
-- observer batches notifications
-- callback runs after changes are collected
-
-Cause → effect:
-
-- element dimensions change
-- browser schedules observer entries
-- callback receives size snapshots
-
-Advantages:
-
-- tracks individual elements
-- supports multiple observed elements
-- much lower overhead than resize events
-- callback-based API
-
-### ResizeObserver API
-
-The API is intentionally minimal.
-
-Constructor:
-
-```ts
-const observer = new ResizeObserver((entries) => {
-  for (const entry of entries) {
-    console.log(entry);
-  }
-});
-```
-
-Observation:
-
-```ts
-observer.observe(element);
-```
-
-Multiple elements can share the same observer:
-
-```ts
-observer.observe(card1);
-observer.observe(card2);
-observer.observe(card3);
-```
-
-### Box Types
-
-ResizeObserver can measure different box models.
-
-Options:
-
-| Box         | Includes                   |
-| ----------- | -------------------------- |
-| content-box | content only               |
-| border-box  | content + padding + border |
-
-Example:
-
-```ts
-observer.observe(element, {
-  box: "border-box",
-});
-```
-
-Behavior difference:
-
-- content-box ignores padding/border changes
-- border-box reacts to total rendered size changes
-
-This matters when layout depends on visual dimensions rather than content area.
-
-### ResizeObserverEntry
-
-Each ResizeObserver callback receives entry objects describing resized elements.
-
-Important properties:
-
-| Property       | Purpose                  |
-| -------------- | ------------------------ |
-| target         | resized element          |
-| contentBoxSize | content dimensions       |
-| borderBoxSize  | total visible dimensions |
-
-Example:
-
-```ts
-const observer = new ResizeObserver((entries) => {
-  for (const entry of entries) {
-    const size = entry.borderBoxSize[0];
-
-    console.log(size.inlineSize); // width
-    console.log(size.blockSize); // height
-  }
-});
-```
-
-> The [0] exists because these values are arrays internally, even though today they usually contain only one item.
+- infinite loading
+- lazy loading
+- sentinel detection
