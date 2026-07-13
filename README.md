@@ -261,3 +261,159 @@ classify data
 → keep active data in memory
 → persist inactive or large data
 ```
+
+## 5.2 - Network Connectivity
+
+Network connectivity design depends on reliability, latency, connection lifetime, bandwidth, and device constraints.
+
+### 5.2.1 - Latency and Reconnection
+
+![Connection loss and reconnection while moving between mobile network towers](assets/images/2026-07-13-11-38-34.png)
+
+Mobile clients may lose connectivity when moving between network towers or switching networks.
+
+A reconnection may require:
+
+1. detecting the lost connection
+2. selecting a new network route
+3. establishing a new transport connection
+4. restoring application state
+5. retrying pending operations
+
+| Responsibility | Typical behavior                                       |
+| -------------- | ------------------------------------------------------ |
+| Client         | Detects failures, retries, and restores subscriptions  |
+| Server         | Keeps enough state to resume the session when required |
+| Transport      | Establishes a new connection before data can continue  |
+
+A new TCP connection adds latency because the client and server must complete a handshake before exchanging application data.
+
+### 5.2.2 - UDP and TCP
+
+![Comparison between UDP communication and the TCP three-way handshake](<assets/images/2026-07-13-11-35-52(1).png>)
+
+UDP and TCP provide different transport guarantees.
+
+| Property           | UDP                         | TCP                         |
+| ------------------ | --------------------------- | --------------------------- |
+| Connection setup   | No handshake                | Three-way handshake         |
+| Delivery guarantee | No                          | Yes                         |
+| Ordering guarantee | No                          | Yes                         |
+| Retransmission     | Application responsibility  | Built into the protocol     |
+| Overhead           | Lower                       | Higher                      |
+| Typical use        | Real-time media, games, DNS | HTTP/1.1, HTTP/2, WebSocket |
+
+TCP begins with a three-way handshake:
+
+```txt
+client → SYN → server
+client ← SYN-ACK ← server
+client → ACK → server
+```
+
+After the connection is established, application data can be exchanged.
+
+UDP avoids this setup cost, but the application must tolerate or handle missing and out-of-order packets.
+
+### 5.2.3 - Protocol Stack
+
+![Relationship between application protocols and TCP or UDP](assets/images/2026-07-13-11-37-04.png)
+
+Web protocols are built on top of transport protocols.
+
+| Protocol           | Transport     | Main use                               |
+| ------------------ | ------------- | -------------------------------------- |
+| HTTP/1.1           | TCP           | Request-response communication         |
+| HTTP/2             | TCP           | Multiplexed HTTP requests              |
+| WebSocket          | Usually TCP   | Bidirectional persistent communication |
+| Server-Sent Events | HTTP over TCP | Server-to-client event stream          |
+| HTTP/3             | QUIC over UDP | Multiplexed HTTP with faster recovery  |
+| WebRTC             | Usually UDP   | Real-time audio, video, and peer data  |
+
+Important notes:
+
+- HTTP/3 runs over QUIC, not directly over raw UDP.
+- WebSocket starts with an HTTP handshake and then keeps a persistent bidirectional connection.
+- Server-Sent Events works over HTTP and is not limited to HTTP/2.
+- WebRTC prefers UDP but may fall back to other transports when necessary.
+
+### 5.2.4 - Polling
+
+![Client polling the server for new orders at a fixed interval](assets/images/2026-07-13-11-37-22.png)
+
+Polling repeatedly asks the server whether new data is available.
+
+```ts
+const intervalId = window.setInterval(async () => {
+  const response = await fetch("/api/orders");
+  const orders = await response.json();
+
+  updateOrders(orders);
+}, 20_000);
+```
+
+Polling is simple, but `data is only discovered on the next request`.
+
+```txt
+poll interval = 20 seconds
+worst-case update delay ≈ 20 seconds
+average update delay ≈ 10 seconds
+```
+
+| Advantage                        | Limitation                           |
+| -------------------------------- | ------------------------------------ |
+| Simple implementation            | Delayed updates                      |
+| Works with normal HTTP endpoints | Repeated requests with no new data   |
+| Easy server architecture         | Extra headers and network activity   |
+| Easy to debug                    | More battery usage on mobile devices |
+
+HTTP connections may be reused through keep-alive, so polling does not always create a new TCP connection for every request. Connection loss or timeout can still force a new handshake.
+
+### 5.2.5 - Mobile Network and Energy Cost
+
+![Connection setup cost and mobile network receive-only and duplex modes](assets/images/2026-07-13-11-37-44.png)
+
+Network activity affects mobile devices more than desktop devices.
+
+Repeated polling can cause:
+
+- periodic CPU work
+- radio wake-ups
+- repeated request headers
+- extra bandwidth usage
+- increased battery consumption
+- reconnection work after network changes
+
+Mobile radios use more energy while actively sending and receiving data than while waiting in a low-power state.
+
+| Mode                                | Behavior                           | Energy use |
+| ----------------------------------- | ---------------------------------- | ---------- |
+| Low-power or receive-oriented state | Mostly waits for incoming activity | Lower      |
+| Active bidirectional state          | Sends and receives data            | Higher     |
+
+The exact battery cost depends on the device, network, signal quality, request frequency, and operating system. A fixed battery-life estimate should not be treated as universal.
+
+### 5.2.6 - When Polling Is Appropriate
+
+Polling is suitable when:
+
+- updates are infrequent
+- a small delay is acceptable
+- implementation simplicity is more important than real-time delivery
+- the application mainly targets stable desktop connections
+
+Polling is less suitable when:
+
+- the client requires immediate updates
+- requests frequently return no new data
+- users are on mobile networks
+- battery and bandwidth are important
+- the connection frequently changes
+
+| Requirement                                   | Better starting point |
+| --------------------------------------------- | --------------------- |
+| Occasional updates                            | Polling               |
+| Server-to-client updates                      | Server-Sent Events    |
+| Bidirectional real-time messages              | WebSocket             |
+| Real-time media or peer communication         | WebRTC                |
+| Modern HTTP with improved connection recovery | HTTP/3                |
