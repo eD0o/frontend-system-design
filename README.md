@@ -417,3 +417,166 @@ Polling is less suitable when:
 | Bidirectional real-time messages              | WebSocket             |
 | Real-time media or peer communication         | WebRTC                |
 | Modern HTTP with improved connection recovery | HTTP/3                |
+
+## 5.3 - Server-Sent Events
+
+Server-Sent Events (SSE) `keep a persistent HTTP connection open so the server can continuously send updates` to the client.
+
+### 5.3.1 - Characteristics and Use Cases
+
+![Server-Sent Events advantages, limitations, and use cases](assets/images/2026-07-13-12-01-11.png)
+
+SSE provides one-way communication:
+
+```txt
+server → client
+```
+
+The client opens the connection with EventSource, and the server responds with a stream using the text/event-stream content type.
+
+| Property                  | Behavior                        |
+| ------------------------- | ------------------------------- |
+| Direction                 | Server to client                |
+| Connection                | Persistent HTTP connection      |
+| Payload                   | Text-based events               |
+| Reconnection              | Built into EventSource          |
+| Ordering                  | Events arrive in stream order   |
+| Client-to-server messages | Require a separate HTTP request |
+
+SSE is a good fit for:
+
+- notifications
+- order status updates
+- dashboards
+- logs
+- progress updates
+- text-based streams
+
+It is `not suitable when both sides need frequent real-time communication`. In that case, WebSocket is usually a better fit.
+
+### 5.3.2 - Client Example
+
+```ts
+const events = new EventSource("/api/orders/stream");
+
+events.onmessage = (event) => {
+  const order = JSON.parse(event.data);
+  updateOrder(order);
+};
+
+events.onerror = () => {
+  // EventSource retries automatically unless the connection is closed.
+};
+```
+
+The server sends events in this format:
+
+```txt
+id: 42
+event: order-created
+data: {"id":"42","status":"created"}
+
+```
+
+| Field | Purpose                              |
+| ----- | ------------------------------------ |
+| data  | Event payload                        |
+| event | Custom event name                    |
+| id    | Identifier used to resume the stream |
+| retry | Suggested reconnection delay         |
+
+Custom event types can be handled separately:
+
+```ts
+events.addEventListener("order-created", (event) => {
+  const order = JSON.parse(event.data);
+  addOrder(order);
+});
+```
+
+### 5.3.3 - Reconnection and Scaling
+
+![SSE reconnection and horizontal server scaling](assets/images/2026-07-13-12-00-49.png)
+
+When the connection is interrupted, EventSource automatically tries to reconnect.
+
+If the server provides event IDs, the browser can send the last processed ID in the Last-Event-ID header. The server may then continue from the next event instead of restarting the stream.
+
+```txt
+connection lost
+→ browser reconnects
+→ Last-Event-ID is sent
+→ server resumes the stream
+```
+
+Automatic reconnection is handled by the client API, but resumability still requires server support.
+
+| Requirement               | Server responsibility                          |
+| ------------------------- | ---------------------------------------------- |
+| Resume after reconnect    | Store or recover events by ID                  |
+| Multiple server instances | Share event state or use a message broker      |
+| Load balancing            | Avoid losing stream position between instances |
+| Duplicate prevention      | Treat event IDs as idempotency references      |
+
+SSE does not automatically make servers stateless. Horizontal scaling usually requires shared infrastructure such as:
+
+- Redis Pub/Sub
+- Kafka
+- a message queue
+- a shared event store
+
+### 5.3.4 - Network and Performance
+
+SSE avoids repeated polling requests because data is sent only when an event is available.
+
+| Polling                            | SSE                                     |
+| ---------------------------------- | --------------------------------------- |
+| Client repeatedly requests updates | Server pushes updates                   |
+| Repeated request headers           | One long-lived response                 |
+| Update delay depends on interval   | Events arrive shortly after publication |
+| Frequent empty responses possible  | No response when no event exists        |
+| Reconnection implemented manually  | EventSource retries automatically       |
+
+SSE works over HTTP/1.1, HTTP/2, and HTTP/3. It is not inherently limited to HTTP/2.
+
+Under HTTP/2 or HTTP/3, multiple streams can share one connection, reducing connection overhead compared with separate HTTP/1.1 connections.
+
+### 5.3.5 - Limitations
+
+SSE has a few important constraints:
+
+- communication is one-way
+- payloads are UTF-8 text
+- binary data must be encoded or fetched separately
+- long-lived connections consume server resources
+- browser connection limits may matter under HTTP/1.1
+- authentication and proxy timeouts need explicit handling
+
+JSON is commonly sent as text:
+
+```ts
+const payload = JSON.parse(event.data);
+```
+
+The connection should be closed when it is no longer needed:
+
+```ts
+events.close();
+```
+
+### 5.3.6 - When to Use SSE
+
+| Requirement                              | Recommended choice |
+| ---------------------------------------- | ------------------ |
+| Occasional updates with acceptable delay | Polling            |
+| Continuous server-to-client updates      | SSE                |
+| Bidirectional real-time communication    | WebSocket          |
+| Audio, video, or peer-to-peer data       | WebRTC             |
+
+Choose SSE when:
+
+- updates originate mainly from the server
+- low latency is useful
+- automatic reconnection is desired
+- text-based events are sufficient
+- full bidirectional communication is unnecessary
